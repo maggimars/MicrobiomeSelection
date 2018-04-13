@@ -1,0 +1,55 @@
+# Bray-Curtis distance and Beta-Group-Significance testing with Qiime2
+
+`source activate qiime2-2018.2` 
+
+1. Imort filtered phyloseq back to qiime2
+
+ * first convert to biom file type
+
+`biom convert -i filteredOTUs.txt -o filteredOTUs.biom --table-type="OTU table" --to-hdf5`
+
+* convert to qiime2 feature table
+
+    qiime tools import \
+    --input-path filteredOTUs.biom \
+    --type 'FeatureTable[Frequency]' \
+    --source-format BIOMV210Format \
+    --output-path feature-table-2.qza
+
+   qiime feature-table summarize \
+    --i-table feature-table-2.qza \
+    --o-visualization feature-table-2.qzv \
+    --m-sample-metadata-file metatable.tsv
+
+2. Compute Bray-Curtis distances between samples
+
+    qiime diversity core-metrics-phylogenetic \
+    --i-phylogeny rooted-tree.qza \
+    --i-table feature-table-2.qza \
+    --output-dir core-metrics-phylogenetic-filtered-182 \
+    --m-metadata-file metatable.tsv  \
+    --p-sampling-depth 99
+    
+4. Significance testing for between group distances, when group = SelectionDietRound
+
+    qiime diversity beta-group-significance \
+    --i-distance-matrix core-metrics-phylogenetic-filtered-182/bray_curtis_distance_matrix.qza \
+    --m-metadata-file metatable.tsv \
+    --m-metadata-column SelectionDietRound \
+    --o-visualization core-metrics-phylogenetic-filtered-182/bray_curtis_distance_significance.qzv \
+    --p-pairwise
+    
+5. Filter distance matrix to look atsignificance of round within a single diet (NSD)
+
+    qiime diversity filter-distance-matrix \
+    --i-distance-matrix core-metrics-phylogenetic-filtered-182/bray_curtis_distance_matrix.qza \
+    --m-metadata-file metatable.tsv \
+    --p-where "Diet='NSD'" \
+    --o-filtered-distance-matrix core-metrics-phylogenetic-filtered-182/NSD-bray_curtis_distance_matrix.qza
+
+    qiime diversity beta-group-significance \
+    --i-distance-matrix core-metrics-phylogenetic-filtered-182/NSD-bray_curtis_distance_matrix.qza \
+    --m-metadata-file metatable.tsv \
+    --m-metadata-column SelectionDietRound \
+    --o-visualization core-metrics-phylogenetic-filtered-182/NSD-bray_curtis_distance_significance.qzv \
+    --p-pairwise
