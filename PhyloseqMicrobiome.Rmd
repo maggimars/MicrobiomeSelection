@@ -1,0 +1,249 @@
+---
+title: "Microbiome Selection - Microbiome Community Analsys"
+author: "Maggi Brisbin"
+date: "March 26, 2018"
+output: 
+  html_document:
+    toc: true # table of content true
+    toc_depth: 3  # upto three depths of headings (specified by #, ## and ###)
+    number_sections: true  ## if you want number sections at each table header
+    theme: united  # many options for theme, this one is my favorite.
+    highlight: tango  # specifies the syntax highlighting style
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(cache=TRUE, fig.path='figures/', fig.width=8, fig.height=5 )
+```
+
+```{r loadLibraries, message=FALSE}
+library("phyloseq")
+library("ggplot2")
+theme_set(theme_bw())
+library("dplyr")
+library("tidyr")
+library("RColorBrewer")
+library(gridExtra)
+library("vegan", lib.loc="/Library/Frameworks/R.framework/Versions/3.4/Resources/library")
+colors<- brewer.pal(12, "Paired")
+```
+
+
+
+# Load Data 
+
+Import Taxonomy, Metadata, and SV feature-table 
+```{r loadData}
+taxonomy<- read.delim("Taxonomy.tsv")
+metatable <- read.delim("Flydata_map.tsv")
+Svtab <- read.delim("feature-table.txt")
+```
+
+# Prepare Data for Phyloseq 
+
+## Taxonomy
+```{r}
+names(taxonomy) <- c("row", "tax", "Confidence")
+row.names(taxonomy) <-taxonomy[[1]]
+taxonomy <- taxonomy[,(-1)]
+taxonomy <-  separate(taxonomy, tax, c("D0","D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8", "D9", "D10", "D11", "D12", "D13", "D14"), sep = ";", fill = "right")
+taxonomy <- taxonomy[,c(1:6)]
+taxmat <- as.matrix(taxonomy)
+TAX = tax_table(taxmat)
+```
+
+## Metadata 
+```{r}
+metatable[[1]] <- lapply(metatable[[1]], gsub, pattern = "-", replacement = ".", fixed = TRUE)
+metatable[[1]]<- paste(metatable[[1]])
+write.table(metatable, file='~/desktop/microbiome2/metatable.tsv', quote=FALSE, sep='\t')
+row.names(metatable) <- metatable[[1]]
+metatable<- metatable[,(-1)]
+metatable$Round <- as.character(metatable$Round)
+META <- sample_data(metatable)
+```
+
+## Phylogenetic Tree
+```{r}
+TREE<- read_tree("tree.nwk")
+```
+
+## SV feature-table 
+```{r}
+row.names(Svtab)<-Svtab[[1]] #make OTU ID the row names
+Svtab<-Svtab[,-(1)] # remove OTU ID column
+fmat <- as.matrix(Svtab) 
+OTU = otu_table(fmat, taxa_are_rows = TRUE)
+```
+
+## Create Phyloseq Object
+```{r}
+ps<- phyloseq(OTU, TAX, META, TREE)
+```
+
+# Preprocessing and data data-filtering 
+Subset Data to include only the NSD and HSD diets 
+```{r}
+dietkeeps <- c("HSD", "NSD")
+ps<- subset_samples(ps, Diet %in% dietkeeps)
+```
+Remove HSD outlier
+```{r}
+ps<- subset_samples(ps, sample_names(ps) != "NSD.HSD.1.9")
+```
+Check Taxa Names 
+```{r}
+rank_names(ps)
+table(tax_table(ps)[, "D1"], exclude = NULL)
+```
+Include Bacterial features only and remove features with taxonomic assignments at the Phylum level (D_1) - these are likely artifacts
+```{r}
+filterPhyla = c("D_1__Acidobacteria" , "D_1__Actinobacteria", "D_1__Bacteroidetes", "D_1__Firmicutes", "D_1__Proteobacteria", "D_1__Saccharibacteria"  )
+ps = subset_taxa(ps, D1 %in% filterPhyla)
+```
+Prevalence Filtering 
+```{r}
+prevdf = apply(X = otu_table(ps),
+               MARGIN = ifelse(taxa_are_rows(ps), yes = 1, no = 2),
+               FUN = function(x){sum(x > 0)})
+
+prevdf = data.frame(Prevalence = prevdf,
+                    TotalAbundance = taxa_sums(ps),
+                    tax_table(ps))
+
+plyr::ddply(prevdf, "D2", function(df1){cbind(mean(df1$Prevalence),sum(df1$Prevalence))})
+
+prevplot<-ggplot(prevdf, aes(TotalAbundance, Prevalence / nsamples(ps),color=D2)) +
+  # Include a guess for parameter
+  geom_hline(yintercept = 0.01, alpha = 0.5, linetype = 2) +  geom_point(size = 2, alpha = 0.7) +
+  scale_x_log10() +  xlab("Total Abundance") + ylab("Prevalence [Frac. Samples]") +
+  facet_wrap(~D2) + theme(legend.position="none")
+```
+
+```{r , echo=FALSE}
+plot(prevplot)
+```
+Apply prevalence filter 
+```{r}
+prevalenceThreshold = 0.01 * nsamples(ps)
+
+keepTaxa = rownames(prevdf)[(prevdf$Prevalence >= prevalenceThreshold)]
+ps2 = prune_taxa(keepTaxa, ps)
+
+table(tax_table(ps2)[, "D0"], exclude = NULL)
+
+prevdf2 = apply(X = otu_table(ps2),
+               MARGIN = ifelse(taxa_are_rows(ps2), yes = 1, no = 2),
+               FUN = function(x){sum(x > 0)})
+
+prevdf2 = data.frame(Prevalence = prevdf2,
+                    TotalAbundance = taxa_sums(ps2),
+                    tax_table(ps2))
+
+plyr::ddply(prevdf2, "D1", function(df1){cbind(mean(df1$Prevalence),sum(df1$Prevalence))})
+
+prevplot2<-ggplot(prevdf2, aes(TotalAbundance, Prevalence / nsamples(ps),color=D2)) +
+  # Include a guess for parameter
+  geom_hline(yintercept = 0.01, alpha = 0.5, linetype = 2) +  geom_point(size = 2, alpha = 0.7) +
+  scale_x_log10() +  xlab("Total Abundance") + ylab("Prevalence [Frac. Samples]") +
+  facet_wrap(~D2) + theme(legend.position="none")
+```
+
+```{r , echo=FALSE}
+plot(prevplot2)
+```
+
+Transform feature counts to relative abundance
+```{r}
+ps2ra = transform_sample_counts(ps2, function(x){(x / sum(x)) *100})
+```
+
+#Relative Abundance Bar Plots
+```{r}
+taxabarplot<-plot_bar(ps2ra, fill = "D2") + scale_y_continuous(expand = c(0, 0)) + ggtitle("Level 2") + scale_fill_manual(values=colors) + theme(legend.title=element_blank()) + geom_bar(aes( fill=D2), stat="identity", position="stack")
+taxaplot <-taxabarplot + theme(legend.position="none")
+
+g_legend<-function(a.gplot){
+  tmp <- ggplot_gtable(ggplot_build(a.gplot))
+  leg <- which(sapply(tmp$grobs, function(x) x$name) == "guide-box")
+  legend <- tmp$grobs[[leg]]
+  legend
+}
+legend <- g_legend(taxabarplot)
+```
+
+```{r , echo=FALSE}
+plot(taxaplot)
+SVlegend <- grid.arrange(legend)
+```
+
+# Diversity Distance Metrics and Principal Coordinate Analysis 
+
+```{r}
+ordu1 = ordinate(ps2ra, "PCoA", "bray")
+ordu2 = ordinate(ps2ra, "PCoA", "unifrac", weighted=TRUE)
+
+p1<-plot_ordination(ps2ra, ordu1, color="Round", shape = "Diet")+ ggtitle("Bray-Curtis") + scale_color_brewer(palette="YlGnBu") +geom_point(size=3)
+p2<-plot_ordination(ps2ra, ordu2, color="Round", shape = "Diet")+ ggtitle("Weighted Unifrac") + scale_color_brewer(palette="YlGnBu") +geom_point(size=3)
+```
+Bray-Curtis PCoA with both NSD and HSD 
+
+```{r , echo=FALSE}
+plot(p1)
+```
+
+Weighted Unifrac PCoA with both NSD and HSD 
+
+```{r , echo=FALSE}
+plot(p2)
+```
+
+Regardless of distance metric, Round 1 for both diets cluster closely together along with Rounds 2-5 in the HSD treatment. 
+
+To get a better look at what is happening in the NSD and determine if selection is influencing the microbiome community, subset the phyloseq object to include only NSD samples.
+
+```{r}
+ps2raNSD <- subset_samples(ps2ra, Diet=="NSD")
+
+ordu1NSD = ordinate(ps2raNSD, "PCoA", "bray")
+ordu2NSD = ordinate(ps2raNSD, "PCoA", "unifrac", weighted=TRUE)
+
+p1NSD<-plot_ordination(ps2raNSD, ordu1NSD, color="Round" , shape = "Selection")+scale_color_brewer(palette="YlGnBu")+ ggtitle("NSD - Bray-Curtis") +geom_point(size=3)
+p2NSD<-plot_ordination(ps2raNSD, ordu2NSD, color="Round", shape = "Selection")+scale_color_brewer(palette="YlGnBu")+ ggtitle("NSD - Weighted Unifrac")+geom_point(size=3)
+```
+
+```{r , echo=FALSE}
+plot(p1NSD)
+```
+
+```{r , echo=FALSE}
+plot(p2NSD)
+```
+
+# Significance Testing with Adonis 
+
+**NSD** 
+```{r}
+set.seed(1)
+OTUs <- t(data.frame(otu_table(ps2raNSD))) #get data frame of OTUs from phyloseq object
+meta <- metatable[metatable$Diet=="NSD",] 
+
+adonis(vegdist(OTUs, method = "bray") ~ SelectionDietRound, data = meta, permutations = 999)
+```
+
+**NSD & HSD** 
+```{r}
+set.seed(1)
+OTUsBD <- t(data.frame(otu_table(ps2ra)))
+metaBD<- metatable[metatable$Diet %in% dietkeeps,]
+metaBD<- metaBD[row.names(metaBD) != "NSD.HSD.1.9",]
+
+adonis(vegdist(OTUsBD, method = "bray") ~ SelectionDietRound, data = metaBD, permutations = 999)
+```
+
+# Export OTU table for Qiime2
+```{r}
+OTUs4Q2 <- data.frame(otu_table(ps2ra))
+OTUs4Q2 <- cbind(rownames(OTUs4Q2), data.frame(OTUs4Q2, row.names=NULL))
+colnames(OTUs4Q2)[1] <- "OTU ID"
+write.table(OTUs4Q2, file='feature-table-2.txt', quote=FALSE, sep='\t', row.names = FALSE)
+```
