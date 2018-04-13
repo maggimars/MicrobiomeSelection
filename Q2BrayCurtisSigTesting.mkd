@@ -6,12 +6,12 @@
 
  * first convert to biom file type
 
-`biom convert -i filteredOTUs.txt -o filteredOTUs.biom --table-type="OTU table" --to-hdf5`
+`biom convert -i feature-table-2.txt -o feature-table-2.biom --table-type="OTU table" --to-hdf5`
 
 * convert to qiime2 feature table
 
         qiime tools import \
-        --input-path filteredOTUs.biom \
+        --input-path feature-table-2.biom \
         --type 'FeatureTable[Frequency]' \
         --source-format BIOMV210Format \
         --output-path feature-table-2.qza
