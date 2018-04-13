@@ -1,5 +1,5 @@
 ---
-title: "Microbiome Selection - Microbiome Community Analsys"
+title: "Microbiome Selection - Microbiome Community Analysis"
 author: "Maggi Brisbin"
 date: "March 26, 2018"
 output: 
